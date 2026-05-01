@@ -196,7 +196,7 @@ canvas { width:100%!important; }
     <div class="user-code" id="modal-code">------</div>
     <a id="modal-link" href="#" target="_blank">↗ BMW Login öffnen</a>
     <div class="modal-progress"><div class="modal-progress-bar" id="modal-progress" style="width:100%"></div></div>
-    <p style="margin-top:16px;font-size:11px">Warte auf Bestätigung...</p>
+    <p style="margin-top:16px;font-size:11px" id="modal-status">Warte auf Bestätigung...</p>
   </div>
 </div>
 
@@ -378,28 +378,36 @@ async function startBmwAuth() {
   document.getElementById('modal-code').textContent = d.user_code;
   document.getElementById('modal-link').href = d.login_url;
   document.getElementById('modal-link').textContent = '↗ BMW Login öffnen';
+  document.getElementById('modal-status').textContent = 'Warte auf Login...';
   document.getElementById('bmw-auth-modal').classList.add('visible');
   window.open(d.login_url, '_blank');
-
-  // Progress bar
   const total = d.expires_in || 300;
   const start = Date.now();
   const prog = document.getElementById('modal-progress');
-
+  let pollCount = 0;
+  if (pollInterval) clearInterval(pollInterval);
   pollInterval = setInterval(async () => {
     const elapsed = (Date.now() - start) / 1000;
     prog.style.width = Math.max(0, 100 - (elapsed/total*100)) + '%';
-
-    const pr = await fetch('/api/bmw/auth/poll', {method:'POST'});
-    const pd = await pr.json();
-    if (pd.ok) {
-      clearInterval(pollInterval);
-      document.getElementById('bmw-auth-modal').classList.remove('visible');
-      document.getElementById('auth-banner').classList.remove('visible');
-      fetchData();
-    }
-    if (elapsed > total) clearInterval(pollInterval);
-  }, 5000);
+    pollCount++;
+    document.getElementById('modal-status').textContent = 'Warte... (' + pollCount + ')';
+    try {
+      const pr = await fetch('/api/bmw/auth/poll', {method:'POST'});
+      if (pr.status === 400) { clearInterval(pollInterval); document.getElementById('modal-status').textContent = 'Bitte erneut klicken...'; return; }
+      const pd = await pr.json();
+      if (pd.ok) {
+        clearInterval(pollInterval);
+        document.getElementById('modal-status').textContent = '✓ Verbunden!';
+        document.getElementById('modal-progress').style.background = '#22d47a';
+        setTimeout(() => {
+          document.getElementById('bmw-auth-modal').classList.remove('visible');
+          document.getElementById('auth-banner').classList.remove('visible');
+          fetchData();
+        }, 1500);
+      }
+    } catch(e) { document.getElementById('modal-status').textContent = 'Verbindungsfehler...'; }
+    if (elapsed > total) { clearInterval(pollInterval); document.getElementById('modal-status').textContent = 'Abgelaufen — bitte neu starten'; }
+  }, 4000);
 }
 
 // ── Pages ────────────────────────────────────────────────────
