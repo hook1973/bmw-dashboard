@@ -215,3 +215,40 @@ async def startup():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
+
+@app.get("/api/debug")
+def debug(request: Request):
+    require_auth(request)
+    tokens = db.load_tokens_db()
+    if not tokens:
+        return {"error": "no_tokens"}
+    
+    token = api.get_valid_token(CLIENT_ID, tokens)
+    if not token:
+        return {"error": "token_invalid", "saved_at": tokens.get("saved_at"), "age_min": int((time.time() - tokens.get("saved_at",0))/60)}
+    
+    results = {}
+    
+    # Test mappings
+    import requests as req
+    def test(url, params=None):
+        try:
+            r = req.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "x-version": "v1"
+            }, params=params or {}, timeout=10)
+            try: body = r.json()
+            except: body = r.text[:200]
+            return {"status": r.status_code, "body": body}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    results["mappings"]  = test(f"{api.BASE_API}/customers/vehicles/mappings")
+    results["basicData"] = test(f"{api.BASE_API}/customers/vehicles/{VIN}/basicData")
+    results["tyres"]     = test(f"{api.BASE_API}/customers/vehicles/{VIN}/smartMaintenanceTyreDiagnosis")
+    results["containers"]= test(f"{api.BASE_API}/customers/containers")
+    results["token_age_min"] = int((time.time() - tokens.get("saved_at",0))/60)
+    
+    return results
