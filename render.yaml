@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: bmw-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: BMW_CLIENT_ID
+        value: 5f4b2906-4dc0-4874-88c6-c84accdcf284
+      - key: BMW_VIN
+        value: WBY21HD080FU24651
+      - key: DASHBOARD_PASSWORD
+        generateValue: false
+        value: changeme

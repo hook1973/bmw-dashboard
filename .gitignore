@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.db
+bmw_tokens.json
+bmw_live_data.json
+bmw_valid_keys.json
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/

@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BMW i4 — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #080810;
+  --surface: #0e0e1a;
+  --surface2: #141428;
+  --border: rgba(255,255,255,0.06);
+  --border2: rgba(255,255,255,0.12);
+  --text: #e8e8f0;
+  --muted: #5a5a78;
+  --accent: #4f7cff;
+  --accent2: #7c5cff;
+  --green: #22d47a;
+  --amber: #ffb340;
+  --red: #ff4f4f;
+  --teal: #22d4c8;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:var(--font-mono); min-height:100vh; overflow-x:hidden; }
+
+/* Login Screen */
+#login-screen {
+  position:fixed; inset:0; background:var(--bg);
+  display:flex; align-items:center; justify-content:center; z-index:100;
+}
+.login-box {
+  width:340px; padding:40px;
+  background:var(--surface); border:1px solid var(--border2);
+  border-radius:16px;
+}
+.login-logo { text-align:center; margin-bottom:32px; }
+.login-logo .badge { width:56px;height:56px;background:var(--accent);border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:800;font-size:18px;margin-bottom:12px; }
+.login-logo h1 { font-family:var(--font-display);font-size:20px;font-weight:700; }
+.login-logo p { font-size:12px;color:var(--muted);margin-top:4px; }
+.login-box input { width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--font-mono);font-size:14px;margin-bottom:12px; }
+.login-box button { width:100%;padding:12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-family:var(--font-display);font-weight:700;font-size:14px;cursor:pointer;transition:opacity 0.2s; }
+.login-box button:hover { opacity:0.85; }
+.login-error { color:var(--red);font-size:12px;text-align:center;margin-top:8px; }
+
+/* BMW Auth Modal */
+#bmw-auth-modal {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,0.85); z-index:200;
+  align-items:center; justify-content:center;
+}
+#bmw-auth-modal.visible { display:flex; }
+.modal-box { width:420px;padding:36px;background:var(--surface);border:1px solid var(--border2);border-radius:16px;text-align:center; }
+.modal-box h2 { font-family:var(--font-display);font-size:20px;margin-bottom:8px; }
+.modal-box p { font-size:13px;color:var(--muted);margin-bottom:24px; }
+.user-code { font-size:32px;font-weight:500;letter-spacing:8px;color:var(--accent);margin:20px 0; }
+.modal-box a { color:var(--accent);font-size:13px; }
+.modal-progress { height:3px;background:var(--surface2);border-radius:2px;margin-top:20px;overflow:hidden; }
+.modal-progress-bar { height:100%;background:var(--accent);transition:width 0.5s; }
+
+/* App Layout */
+#app { display:none; min-height:100vh; }
+#app.visible { display:block; }
+
+header {
+  padding:0 32px;
+  height:64px;
+  border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:50;
+  background:rgba(8,8,16,0.9);
+  backdrop-filter:blur(20px);
+}
+.header-left { display:flex;align-items:center;gap:16px; }
+.h-badge { width:36px;height:36px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:800;font-size:12px; }
+.h-title { font-family:var(--font-display);font-size:15px;font-weight:700; }
+.h-sub { font-size:10px;color:var(--muted);margin-top:1px; }
+
+nav { display:flex;gap:4px; }
+nav a { padding:6px 14px;border-radius:6px;font-size:12px;color:var(--muted);text-decoration:none;transition:all 0.2s; }
+nav a:hover { color:var(--text);background:var(--surface2); }
+nav a.active { color:var(--text);background:var(--surface2); }
+
+.header-right { display:flex;align-items:center;gap:12px; }
+#fetch-btn { padding:7px 16px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:var(--font-mono);font-size:11px;cursor:pointer;transition:opacity 0.2s; }
+#fetch-btn:hover { opacity:0.8; }
+#fetch-btn:disabled { opacity:0.4;cursor:default; }
+#status-dot { width:8px;height:8px;border-radius:50%;background:var(--muted); }
+#status-dot.online { background:var(--green); }
+#last-update { font-size:10px;color:var(--muted); }
+
+/* Pages */
+.page { display:none;padding:32px; }
+.page.active { display:block; }
+
+/* Cards */
+.grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:24px; }
+.grid-2 { grid-template-columns:repeat(2,1fr); }
+.grid-3 { grid-template-columns:repeat(3,1fr); }
+.card { background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px; }
+.card-label { font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:16px; }
+
+/* Metric */
+.metric-big { font-family:var(--font-display);font-size:48px;font-weight:700;line-height:1; }
+.metric-unit { font-size:16px;color:var(--muted);margin-left:4px; }
+.metric-sub { font-size:11px;color:var(--muted);margin-top:6px; }
+
+/* SOC Bar */
+.soc-bar-wrap { margin:12px 0 6px; }
+.soc-bar { height:6px;background:var(--surface2);border-radius:3px;overflow:hidden; }
+.soc-fill { height:100%;border-radius:3px;transition:width 0.8s cubic-bezier(0.4,0,0.2,1); }
+
+/* Rows */
+.row { display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border); }
+.row:last-child { border-bottom:none; }
+.row-label { font-size:12px;color:var(--muted); }
+.row-val { font-size:12px; }
+
+/* Badges */
+.badge { display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:500; }
+.badge::before { content:'';width:5px;height:5px;border-radius:50%;flex-shrink:0; }
+.badge-green  { background:#0d2e1a;color:var(--green);  } .badge-green::before  { background:var(--green); }
+.badge-blue   { background:#0d1a3a;color:var(--accent); } .badge-blue::before   { background:var(--accent); }
+.badge-amber  { background:#2e1e00;color:var(--amber);  } .badge-amber::before  { background:var(--amber); }
+.badge-red    { background:#2e0d0d;color:var(--red);    } .badge-red::before    { background:var(--red); }
+.badge-gray   { background:var(--surface2);color:var(--muted); } .badge-gray::before { background:var(--muted); }
+
+/* Tyre Grid */
+.tyre-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px; }
+.tyre { background:var(--surface2);border-radius:8px;padding:14px;text-align:center; }
+.tyre-pos { font-size:9px;letter-spacing:2px;color:var(--muted);margin-bottom:6px; }
+.tyre-km { font-family:var(--font-display);font-size:22px;font-weight:700; }
+.tyre-label { font-size:10px;color:var(--muted);margin-top:4px; }
+
+/* Charging Table */
+.table-wrap { overflow-x:auto; }
+table { width:100%;border-collapse:collapse;font-size:12px; }
+th { text-align:left;padding:10px 12px;color:var(--muted);font-size:10px;letter-spacing:1px;border-bottom:1px solid var(--border2);font-weight:400; }
+td { padding:10px 12px;border-bottom:1px solid var(--border); }
+tr:last-child td { border-bottom:none; }
+tr:hover td { background:var(--surface2); }
+.kw-bar { height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;overflow:hidden; }
+.kw-fill { height:100%;background:var(--accent);border-radius:2px; }
+
+/* Stats Chart */
+.chart-wrap { position:relative;height:200px;margin-top:16px; }
+canvas { width:100%!important; }
+
+/* BMW Auth Banner */
+#auth-banner { display:none;padding:16px 32px;background:#1a0d00;border-bottom:1px solid #3a2000; }
+#auth-banner.visible { display:flex;align-items:center;justify-content:space-between; }
+#auth-banner p { font-size:13px;color:var(--amber); }
+#auth-banner button { padding:8px 16px;background:var(--amber);border:none;border-radius:6px;color:#000;font-family:var(--font-mono);font-size:12px;cursor:pointer; }
+
+/* GPS */
+.gps-link { color:var(--accent);text-decoration:none;font-size:11px; }
+.gps-link:hover { text-decoration:underline; }
+
+/* Spinner */
+.spin { display:inline-block;width:10px;height:10px;border:1.5px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* Mobile */
+@media (max-width:768px) {
+  header { padding:0 16px; }
+  .page { padding:16px; }
+  nav a span { display:none; }
+  .grid-2,.grid-3 { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="badge">i4</div>
+      <h1>BMW i4 Dashboard</h1>
+      <p>WBY21HD080FU24651</p>
+    </div>
+    <input type="password" id="pw-input" placeholder="Passwort" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">Anmelden</button>
+    <div class="login-error" id="login-err"></div>
+  </div>
+</div>
+
+<!-- BMW Auth Modal -->
+<div id="bmw-auth-modal">
+  <div class="modal-box">
+    <h2>BMW Login erforderlich</h2>
+    <p>Öffne den Link und gib den Code ein um die Verbindung zur BMW CarData API herzustellen.</p>
+    <div class="user-code" id="modal-code">------</div>
+    <a id="modal-link" href="#" target="_blank">↗ BMW Login öffnen</a>
+    <div class="modal-progress"><div class="modal-progress-bar" id="modal-progress" style="width:100%"></div></div>
+    <p style="margin-top:16px;font-size:11px">Warte auf Bestätigung...</p>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <div id="auth-banner">
+    <p>⚠ BMW CarData nicht verbunden — Fahrzeugdaten können nicht abgerufen werden</p>
+    <button onclick="startBmwAuth()">BMW verbinden</button>
+  </div>
+
+  <header>
+    <div class="header-left">
+      <div class="h-badge">i4</div>
+      <div>
+        <div class="h-title">BMW i4 eDrive40</div>
+        <div class="h-sub">WBY21HD080FU24651 · Alpinweiß · 340 PS</div>
+      </div>
+    </div>
+    <nav>
+      <a href="#" class="active" onclick="showPage('dashboard',this)"><span>◈ </span>Dashboard</a>
+      <a href="#" onclick="showPage('charging',this)"><span>⚡ </span>Laden</a>
+      <a href="#" onclick="showPage('stats',this)"><span>◎ </span>Statistik</a>
+    </nav>
+    <div class="header-right">
+      <div id="status-dot"></div>
+      <div id="last-update">–</div>
+      <button id="fetch-btn" onclick="fetchData()">Abrufen</button>
+    </div>
+  </header>
+
+  <!-- Dashboard Page -->
+  <div class="page active" id="page-dashboard">
+    <div class="grid">
+      <!-- SOC -->
+      <div class="card">
+        <div class="card-label">Akkustand</div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <div class="metric-big" id="soc-val">–</div>
+          <div class="metric-unit">%</div>
+        </div>
+        <div class="soc-bar-wrap">
+          <div class="soc-bar"><div class="soc-fill" id="soc-bar" style="width:0%"></div></div>
+        </div>
+        <div class="metric-sub" id="soc-ts">–</div>
+      </div>
+
+      <!-- Reichweite -->
+      <div class="card">
+        <div class="card-label">Reichweite</div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <div class="metric-big" id="range-val">–</div>
+          <div class="metric-unit">km</div>
+        </div>
+        <div class="metric-sub">Elektrische Reichweite</div>
+      </div>
+
+      <!-- Kilometerstand -->
+      <div class="card">
+        <div class="card-label">Kilometerstand</div>
+        <div style="display:flex;align-items:baseline;gap:6px">
+          <div class="metric-big" id="km-val">–</div>
+          <div class="metric-unit">km</div>
+        </div>
+        <div class="metric-sub" id="km-sub">–</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <!-- Fahrzeugstatus -->
+      <div class="card">
+        <div class="card-label">Fahrzeugstatus</div>
+        <div class="row"><span class="row-label">Ladestatus</span><span id="chg-status">–</span></div>
+        <div class="row"><span class="row-label">Stecker</span><span id="plug-status">–</span></div>
+        <div class="row"><span class="row-label">Alarmanlage</span><span id="alarm-status">–</span></div>
+        <div class="row"><span class="row-label">Fahrertür</span><span id="door-status">–</span></div>
+        <div class="row"><span class="row-label">Kofferraum</span><span id="trunk-status">–</span></div>
+        <div class="row"><span class="row-label">SIM</span><span id="sim-status">–</span></div>
+      </div>
+
+      <!-- Fahrzeuginfo + GPS -->
+      <div class="card">
+        <div class="card-label">Fahrzeug & Position</div>
+        <div class="row"><span class="row-label">Modell</span><span class="row-val" id="model-name">–</span></div>
+        <div class="row"><span class="row-label">Baureihe</span><span class="row-val" id="model-series">–</span></div>
+        <div class="row"><span class="row-label">Baujahr</span><span class="row-val" id="model-year">–</span></div>
+        <div class="row"><span class="row-label">Lademodus</span><span class="row-val" id="charge-modes">–</span></div>
+        <div class="row"><span class="row-label">GPS</span><span class="row-val" id="gps-link">–</span></div>
+        <div class="row"><span class="row-label">Richtung</span><span class="row-val" id="heading-val">–</span></div>
+      </div>
+    </div>
+
+    <!-- Reifen -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-label">Reifen — Goodyear Eagle F1 Asymmetric 5 XL 245/45 R18</div>
+      <div class="tyre-grid" id="tyre-grid">
+        <div class="tyre"><div class="tyre-pos">VL</div><div class="tyre-km" id="tyre-fl">–</div><div class="tyre-label">km verbleibend</div></div>
+        <div class="tyre"><div class="tyre-pos">VR</div><div class="tyre-km" id="tyre-fr">–</div><div class="tyre-label">km verbleibend</div></div>
+        <div class="tyre"><div class="tyre-pos">HL</div><div class="tyre-km" id="tyre-rl">–</div><div class="tyre-label">km verbleibend</div></div>
+        <div class="tyre"><div class="tyre-pos">HR</div><div class="tyre-km" id="tyre-rr">–</div><div class="tyre-label">km verbleibend</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charging Page -->
+  <div class="page" id="page-charging">
+    <div class="grid grid-3" id="charging-stats-cards">
+      <div class="card"><div class="card-label">Gesamt geladen</div><div class="metric-big" id="stat-total-kwh">–</div><div class="metric-unit" style="display:inline">kWh</div></div>
+      <div class="card"><div class="card-label">Sessions gesamt</div><div class="metric-big" id="stat-sessions">–</div></div>
+      <div class="card"><div class="card-label">Ø pro Session</div><div class="metric-big" id="stat-avg-kwh">–</div><div class="metric-unit" style="display:inline">kWh</div></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Ladehistorie</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>DATUM</th><th>ORT</th><th>kWh</th><th>SOC</th><th>DAUER</th><th>MAX kW</th><th>KM</th>
+          </tr></thead>
+          <tbody id="charging-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats Page -->
+  <div class="page" id="page-stats">
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-label">Monatlicher Verbrauch (kWh)</div>
+        <div class="chart-wrap"><canvas id="monthly-chart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Akku-Kennzahlen</div>
+        <div class="row"><span class="row-label">Full Equivalent Cycles</span><span class="row-val">79 FEC</span></div>
+        <div class="row"><span class="row-label">Garantie-Nutzung</span><span class="row-val">5% (von 1.600)</span></div>
+        <div class="row"><span class="row-label">Ø Zellspannungs-Spread</span><span class="row-val">8 mV</span></div>
+        <div class="row"><span class="row-label">Lade-Effizienz</span><span class="row-val">95,5%</span></div>
+        <div class="row"><span class="row-label">Gesamtentladung</span><span class="row-val">6.638 kWh</span></div>
+        <div class="row"><span class="row-label">Bewertung</span><span class="row-val"><span class="badge badge-green">Wie neu</span></span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Ladeorte</div>
+      <div id="lbcs-list"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+let DATA = null;
+let CHARGING = null;
+let pollInterval = null;
+let monthlyChart = null;
+
+// ── Auth ─────────────────────────────────────────────────────
+async function doLogin() {
+  const pw = document.getElementById('pw-input').value;
+  const r = await fetch('/api/login', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({password: pw})
+  });
+  if (r.ok) {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.add('visible');
+    init();
+  } else {
+    document.getElementById('login-err').textContent = 'Falsches Passwort';
+  }
+}
+document.getElementById('pw-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// ── BMW Auth ──────────────────────────────────────────────────
+async function startBmwAuth() {
+  const r = await fetch('/api/bmw/auth/start', {method:'POST'});
+  if (!r.ok) { alert('Fehler beim Starten des BMW Logins'); return; }
+  const d = await r.json();
+  document.getElementById('modal-code').textContent = d.user_code;
+  document.getElementById('modal-link').href = d.login_url;
+  document.getElementById('modal-link').textContent = '↗ BMW Login öffnen';
+  document.getElementById('bmw-auth-modal').classList.add('visible');
+  window.open(d.login_url, '_blank');
+
+  // Progress bar
+  const total = d.expires_in || 300;
+  const start = Date.now();
+  const prog = document.getElementById('modal-progress');
+
+  pollInterval = setInterval(async () => {
+    const elapsed = (Date.now() - start) / 1000;
+    prog.style.width = Math.max(0, 100 - (elapsed/total*100)) + '%';
+
+    const pr = await fetch('/api/bmw/auth/poll', {method:'POST'});
+    const pd = await pr.json();
+    if (pd.ok) {
+      clearInterval(pollInterval);
+      document.getElementById('bmw-auth-modal').classList.remove('visible');
+      document.getElementById('auth-banner').classList.remove('visible');
+      fetchData();
+    }
+    if (elapsed > total) clearInterval(pollInterval);
+  }, 5000);
+}
+
+// ── Pages ────────────────────────────────────────────────────
+function showPage(name, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'charging' && !CHARGING) loadCharging();
+  if (name === 'stats') renderStats();
+}
+
+// ── Data Fetch ───────────────────────────────────────────────
+async function fetchData() {
+  const btn = document.getElementById('fetch-btn');
+  btn.innerHTML = '<span class="spin"></span>Lädt...';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/fetch', {method:'POST'});
+    if (r.status === 401) { showLogin(); return; }
+    DATA = await r.json();
+    renderDashboard();
+    document.getElementById('status-dot').classList.add('online');
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('de-AT');
+  } catch(e) {
+    document.getElementById('last-update').textContent = 'Fehler';
+  }
+  btn.innerHTML = 'Abrufen';
+  btn.disabled = false;
+}
+
+async function loadSnapshot() {
+  const r = await fetch('/api/snapshot');
+  if (r.ok) {
+    DATA = await r.json();
+    if (!DATA.error) {
+      renderDashboard();
+      document.getElementById('status-dot').classList.add('online');
+      const ts = DATA.timestamp ? new Date(DATA.timestamp).toLocaleString('de-AT') : '–';
+      document.getElementById('last-update').textContent = ts;
+    }
+  }
+}
+
+async function loadCharging() {
+  const r = await fetch('/api/charging?limit=100');
+  if (r.ok) {
+    CHARGING = await r.json();
+    renderCharging();
+  }
+}
+
+// ── Render ───────────────────────────────────────────────────
+function tv(key) {
+  return DATA?.telemetry?.[key]?.value ?? null;
+}
+
+function ts(iso) {
+  if (!iso) return '–';
+  return new Date(iso).toLocaleString('de-AT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+function badge(text, cls) {
+  return `<span class="badge badge-${cls}">${text}</span>`;
+}
+
+function renderDashboard() {
+  if (!DATA) return;
+  const bd = DATA.basicData || {};
+  const tel = DATA.telemetry || {};
+
+  // SOC
+  const soc = parseInt(tv("vehicle.powertrain.electric.battery.stateOfCharge.displayed") || 0);
+  const socColor = soc > 60 ? '#22d47a' : soc > 25 ? '#ffb340' : '#ff4f4f';
+  document.getElementById('soc-val').textContent = soc || '–';
+  document.getElementById('soc-val').style.color = socColor;
+  document.getElementById('soc-bar').style.width = soc + '%';
+  document.getElementById('soc-bar').style.background = socColor;
+  const socTs = tel["vehicle.powertrain.electric.battery.stateOfCharge.displayed"]?.timestamp;
+  document.getElementById('soc-ts').textContent = socTs ? 'Stand: ' + ts(socTs) : '';
+
+  // Reichweite
+  const range = tv("vehicle.powertrain.electric.range.electric");
+  document.getElementById('range-val').textContent = range ? Math.round(range) : '–';
+
+  // Kilometerstand
+  const km = tv("vehicle.vehicle.travelledDistance");
+  document.getElementById('km-val').textContent = km ? parseInt(km).toLocaleString('de-AT') : '–';
+  document.getElementById('km-sub').textContent = 'Odometer';
+
+  // Status
+  const chgSt = tv("vehicle.powertrain.electric.battery.charging.status");
+  document.getElementById('chg-status').innerHTML = chgSt
+    ? badge(chgSt, chgSt.includes('CHARG') ? 'green' : chgSt.includes('COMPLETE') ? 'blue' : 'gray')
+    : badge('–','gray');
+
+  const plug = tv("vehicle.body.chargingPort.status");
+  document.getElementById('plug-status').innerHTML = plug
+    ? badge(plug, plug==='CONNECTED'?'green':'gray') : badge('–','gray');
+
+  const alarm = tv("vehicle.vehicle.antiTheftAlarmSystem.alarm.armStatus");
+  document.getElementById('alarm-status').innerHTML = alarm
+    ? badge(alarm, alarm.includes('doors')?'green':alarm==='unarmed'?'gray':'amber') : badge('–','gray');
+
+  const door = tv("vehicle.cabin.door.row1.driver.isOpen");
+  document.getElementById('door-status').innerHTML = door !== null
+    ? badge(door==='true'?'Offen':'Zu', door==='true'?'amber':'green') : badge('–','gray');
+
+  const trunk = tv("vehicle.body.trunk.isOpen");
+  document.getElementById('trunk-status').innerHTML = trunk !== null
+    ? badge(trunk==='true'?'Offen':'Zu', trunk==='true'?'amber':'green') : badge('–','gray');
+
+  document.getElementById('sim-status').innerHTML = badge(bd.simStatus||'–', bd.simStatus==='ACTIVE'?'green':'gray');
+
+  // Fahrzeuginfo
+  document.getElementById('model-name').textContent = bd.modelName || '–';
+  document.getElementById('model-series').textContent = `${bd.series || '–'}-Serie / ${bd.seriesDevt || '–'}`;
+  document.getElementById('model-year').textContent = (bd.constructionDate||'').slice(0,4) || '–';
+  document.getElementById('charge-modes').textContent = (bd.chargingModes||[]).join(', ') || '–';
+
+  // GPS
+  const lat = tv("vehicle.cabin.infotainment.navigation.currentLocation.latitude");
+  const lon = tv("vehicle.cabin.infotainment.navigation.currentLocation.longitude");
+  if (lat && lon && lat !== '0' && lon !== '0') {
+    document.getElementById('gps-link').innerHTML =
+      `<a class="gps-link" href="https://maps.google.com/?q=${lat},${lon}" target="_blank">${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)} ↗</a>`;
+  } else {
+    document.getElementById('gps-link').textContent = 'Nicht verfügbar';
+  }
+
+  const heading = tv("vehicle.cabin.infotainment.navigation.currentLocation.heading");
+  document.getElementById('heading-val').textContent = heading ? `${parseFloat(heading).toFixed(0)}°` : '–';
+
+  // Reifen
+  const tyres = DATA.tyres?.passengerCar?.mountedTyres || {};
+  const tyreMap = {fl:'frontLeft', fr:'frontRight', rl:'rearLeft', rr:'rearRight'};
+  for (const [id, key] of Object.entries(tyreMap)) {
+    const t = tyres[key] || {};
+    const km = t.tyreWear?.dueMileage;
+    const color = t.tyreWear?.statusColor==='GREEN' ? '#22d47a' : t.tyreWear?.statusColor==='YELLOW' ? '#ffb340' : '#ff4f4f';
+    const el = document.getElementById(`tyre-${id}`);
+    if (el) { el.textContent = km ? parseInt(km).toLocaleString('de-AT') : '–'; el.style.color = color; }
+  }
+}
+
+function renderCharging() {
+  if (!CHARGING) return;
+  const { sessions, stats } = CHARGING;
+  const t = stats.totals || {};
+
+  document.getElementById('stat-total-kwh').textContent = t.total_kwh ? Math.round(t.total_kwh) : '–';
+  document.getElementById('stat-sessions').textContent = t.total_sessions || '–';
+  document.getElementById('stat-avg-kwh').textContent = t.avg_kwh ? t.avg_kwh.toFixed(1) : '–';
+
+  const tbody = document.getElementById('charging-table');
+  tbody.innerHTML = sessions.map(s => {
+    const d = new Date(s.start_time * 1000);
+    const dateStr = d.toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    const timeStr = d.toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'});
+    const dur = Math.round((s.duration_sec||0)/60);
+    const pct = Math.min(100, ((s.max_power_kw||0)/12)*100);
+    const pwColor = (s.max_power_kw||0) > 9 ? '#22d47a' : (s.max_power_kw||0) > 5 ? '#ffb340' : '#ff4f4f';
+    return `<tr>
+      <td>${dateStr} ${timeStr}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.address||'–'}</td>
+      <td style="font-family:var(--font-display);font-weight:600">${(s.energy_kwh||0).toFixed(1)}</td>
+      <td><span style="color:#22d47a">${s.soc_start||'?'}%</span> → <span style="color:#4f7cff">${s.soc_end||'?'}%</span></td>
+      <td>${dur} min</td>
+      <td>
+        <span style="color:${pwColor}">${(s.max_power_kw||0).toFixed(1)}</span>
+        <div class="kw-bar"><div class="kw-fill" style="width:${pct}%;background:${pwColor}"></div></div>
+      </td>
+      <td>${(s.mileage||0).toLocaleString('de-AT')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderStats() {
+  if (!CHARGING) {
+    loadCharging().then(() => renderStats()); return;
+  }
+  const monthly = CHARGING.stats?.monthly || [];
+  if (monthlyChart) monthlyChart.destroy();
+
+  const canvas = document.getElementById('monthly-chart');
+  monthlyChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: monthly.map(m => m.month).reverse(),
+      datasets: [{
+        label: 'kWh',
+        data: monthly.map(m => m.kwh).reverse(),
+        backgroundColor: '#4f7cff44',
+        borderColor: '#4f7cff',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#5a5a78', font: { size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: '#5a5a78', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+
+  // Ladeorte
+  const lbcs = DATA?.chargingLocations || [];
+  document.getElementById('lbcs-list').innerHTML = lbcs.map(l => `
+    <div class="row">
+      <span class="row-label">${l.latitude?.toFixed(4)}, ${l.longitude?.toFixed(4)}</span>
+      <span class="row-val">${l.visits}x · zuletzt ${(l.lastVisit||'').slice(0,10)} · ${l.acCurrentLimit}A</span>
+    </div>
+  `).join('');
+}
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  const status = await (await fetch('/api/status')).json();
+  if (!status.authenticated) {
+    document.getElementById('auth-banner').classList.add('visible');
+  }
+  await loadSnapshot();
+  if (!DATA || DATA.error) fetchData();
+  // Auto-refresh alle 5 Minuten
+  setInterval(fetchData, 5 * 60 * 1000);
+}
+
+// Passwort-Cookie check beim Laden
+(async () => {
+  const r = await fetch('/api/snapshot');
+  if (r.status !== 401) {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').classList.add('visible');
+    init();
+  }
+})();
+</script>
+</body>
+</html>
