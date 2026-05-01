@@ -1,5 +1,7 @@
 """
 BMW Dashboard — FastAPI Backend
+VERSION: 2.0.0
+Tokens werden aus Environment Variables geladen (Render-persistent)
 """
 import os, time, json, threading
 from datetime import datetime, timedelta, timezone
@@ -13,10 +15,15 @@ import uvicorn
 import database as db
 import bmw_api as api
 
+VERSION        = "2.0.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
 CONTAINER_NAME = "bmw_i4_dashboard"
+
+# Tokens aus Environment Variables (persistent auf Render)
+ENV_REFRESH_TOKEN = os.getenv("BMW_REFRESH_TOKEN", "")
+ENV_GCID          = os.getenv("BMW_GCID", "")
 
 app = FastAPI(title="BMW i4 Dashboard", docs_url=None, redoc_url=None)
 db.init_db()
@@ -25,7 +32,7 @@ _last_fetch = 0
 _fetch_lock = threading.Lock()
 
 
-# ── DCF State in DB (Render-safe) ────────────────────────────
+# ── DCF State in DB ──────────────────────────────────────────
 
 def save_dcf_state(state: dict):
     conn = db.get_db()
@@ -53,6 +60,49 @@ def clear_dcf_state():
         pass
 
 
+# ── Token Management ─────────────────────────────────────────
+
+def get_token() -> str | None:
+    """Holt gültigen Token — aus DB, ENV oder via Refresh."""
+    tokens = db.load_tokens_db()
+
+    # Falls keine DB-Tokens aber ENV-Refresh-Token vorhanden → erneuern
+    if not tokens and ENV_REFRESH_TOKEN:
+        print("  → Erneuere Token aus ENV_REFRESH_TOKEN...")
+        new_t = api.refresh_token(CLIENT_ID, ENV_REFRESH_TOKEN)
+        if new_t:
+            new_t["gcid"] = ENV_GCID
+            db.save_tokens_db(new_t)
+            api._token_cache = new_t
+            tokens = new_t
+            print("  ✓ Token aus ENV erneuert")
+
+    if not tokens:
+        return None
+
+    age     = time.time() - tokens.get("saved_at", 0)
+    expires = tokens.get("expires_in", 3600)
+
+    # Token noch gültig
+    if age < expires - 60:
+        api._token_cache = tokens
+        return tokens["access_token"]
+
+    # Token abgelaufen → Refresh
+    refresh = tokens.get("refresh_token") or ENV_REFRESH_TOKEN
+    if refresh:
+        print("  → Access Token abgelaufen — erneuere...")
+        new_t = api.refresh_token(CLIENT_ID, refresh)
+        if new_t:
+            new_t["gcid"] = tokens.get("gcid", ENV_GCID)
+            db.save_tokens_db(new_t)
+            api._token_cache = new_t
+            print("  ✓ Token erneuert")
+            return new_t["access_token"]
+
+    return None
+
+
 # ── Auth ─────────────────────────────────────────────────────
 
 def check_password(request: Request) -> bool:
@@ -67,13 +117,9 @@ def require_auth(request: Request):
 
 def fetch_all_data():
     global _last_fetch
-    tokens = db.load_tokens_db()
-    token = api.get_valid_token(CLIENT_ID, tokens)
+    token = get_token()
     if not token:
         return {"error": "no_token", "message": "Bitte BMW verbinden"}
-
-    if api._token_cache and api._token_cache != tokens:
-        db.save_tokens_db(api._token_cache)
 
     result = {"timestamp": datetime.now(timezone.utc).isoformat(), "vin": VIN}
 
@@ -92,15 +138,13 @@ def fetch_all_data():
 
     sessions = api.get_charging_history(token, VIN, days=90)
     if sessions:
-        inserted = db.save_charging_sessions(sessions)
-        result["new_sessions"] = inserted
+        result["new_sessions"] = db.save_charging_sessions(sessions)
 
     tyres = api.get_tyre_diagnosis(token, VIN)
     if tyres:
         result["tyres"] = tyres
 
-    lbcs = api.get_lbcs(token, VIN)
-    result["chargingLocations"] = lbcs
+    result["chargingLocations"] = api.get_lbcs(token, VIN)
 
     db.save_snapshot(result)
     _last_fetch = time.time()
@@ -109,18 +153,34 @@ def fetch_all_data():
 
 # ── API Routes ───────────────────────────────────────────────
 
+@app.get("/api/version")
+def version():
+    """Zeigt die aktuelle Version — zum Prüfen ob neuer Code deployed ist."""
+    return {
+        "version": VERSION,
+        "deployed": datetime.now(timezone.utc).isoformat(),
+        "vin": VIN,
+        "env_refresh_token": "✓ vorhanden" if ENV_REFRESH_TOKEN else "✗ fehlt",
+    }
+
 @app.get("/api/status")
 def status():
-    tokens = db.load_tokens_db()
-    has_token = bool(tokens and tokens.get("access_token"))
-    return {"authenticated": has_token, "last_fetch": _last_fetch, "vin": VIN}
+    token = get_token()
+    return {
+        "version": VERSION,
+        "authenticated": bool(token),
+        "has_env_token": bool(ENV_REFRESH_TOKEN),
+        "last_fetch": _last_fetch,
+        "vin": VIN
+    }
 
 @app.post("/api/login")
 async def login(request: Request):
     body = await request.json()
     if body.get("password") == PASSWORD:
-        response = JSONResponse({"ok": True})
-        response.set_cookie("auth_token", PASSWORD, httponly=True, samesite="lax")
+        response = JSONResponse({"ok": True, "version": VERSION})
+        response.set_cookie("auth_token", PASSWORD, httponly=True,
+                            samesite="lax", max_age=60*60*24*30)
         return response
     raise HTTPException(status_code=401, detail="Falsches Passwort")
 
@@ -146,11 +206,10 @@ def charging_history(request: Request, limit: int = 100, offset: int = 0):
     stats = db.get_charging_stats()
     return {"sessions": sessions, "stats": stats}
 
-@app.get("/api/telemetry/{key}")
+@app.get("/api/telemetry/{key:path}")
 def telemetry_history(key: str, request: Request, limit: int = 100):
     require_auth(request)
-    full_key = key if "." in key else f"vehicle.{key}"
-    return {"key": full_key, "data": db.get_telemetry_history(full_key, limit=limit)}
+    return {"key": key, "data": db.get_telemetry_history(key, limit=limit)}
 
 
 # ── BMW Auth ─────────────────────────────────────────────────
@@ -174,7 +233,7 @@ def bmw_auth_poll(request: Request):
     require_auth(request)
     state = load_dcf_state()
     if not state.get("device_code"):
-        raise HTTPException(400, "Kein aktiver Auth-Flow — bitte neu starten")
+        raise HTTPException(400, "Kein aktiver Auth-Flow")
     tokens = api.poll_token(CLIENT_ID, state["device_code"], state["code_verifier"])
     if tokens:
         db.save_tokens_db(tokens)
@@ -186,8 +245,7 @@ def bmw_auth_poll(request: Request):
 @app.get("/api/bmw/containers")
 def list_containers(request: Request):
     require_auth(request)
-    tokens = db.load_tokens_db()
-    token = api.get_valid_token(CLIENT_ID, tokens)
+    token = get_token()
     if not token:
         raise HTTPException(401, "Kein BMW Token")
     return api.get_containers(token)
@@ -199,56 +257,31 @@ static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+@app.get("/favicon.ico")
+async def favicon():
+    raise HTTPException(404)
+
+@app.get("/api/{path:path}")
+async def api_404(path: str):
+    raise HTTPException(404, f"API endpoint /api/{path} not found")
+
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def serve_spa(full_path: str, request: Request):
     index = static_dir / "index.html"
     if index.exists():
         return HTMLResponse(index.read_text())
-    return HTMLResponse("<h1>BMW Dashboard</h1>")
+    return HTMLResponse("<h1>BMW Dashboard v{VERSION}</h1>")
 
 @app.on_event("startup")
 async def startup():
-    print(f"BMW Dashboard gestartet — VIN: {VIN}")
-    tokens = db.load_tokens_db()
-    print("  ✓ Tokens vorhanden" if tokens else "  ⚠ Keine Tokens")
+    print(f"╔══════════════════════════════════════╗")
+    print(f"║  BMW Dashboard v{VERSION}                ║")
+    print(f"║  VIN: {VIN}    ║")
+    print(f"╚══════════════════════════════════════╝")
+    print(f"  ENV_REFRESH_TOKEN: {'✓ vorhanden' if ENV_REFRESH_TOKEN else '✗ fehlt'}")
+    token = get_token()
+    print(f"  Token beim Start:  {'✓ gültig' if token else '✗ nicht verfügbar'}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
-
-
-@app.get("/api/debug")
-def debug(request: Request):
-    require_auth(request)
-    tokens = db.load_tokens_db()
-    if not tokens:
-        return {"error": "no_tokens"}
-    
-    token = api.get_valid_token(CLIENT_ID, tokens)
-    if not token:
-        return {"error": "token_invalid", "saved_at": tokens.get("saved_at"), "age_min": int((time.time() - tokens.get("saved_at",0))/60)}
-    
-    results = {}
-    
-    # Test mappings
-    import requests as req
-    def test(url, params=None):
-        try:
-            r = req.get(url, headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "x-version": "v1"
-            }, params=params or {}, timeout=10)
-            try: body = r.json()
-            except: body = r.text[:200]
-            return {"status": r.status_code, "body": body}
-        except Exception as e:
-            return {"error": str(e)}
-    
-    results["mappings"]  = test(f"{api.BASE_API}/customers/vehicles/mappings")
-    results["basicData"] = test(f"{api.BASE_API}/customers/vehicles/{VIN}/basicData")
-    results["tyres"]     = test(f"{api.BASE_API}/customers/vehicles/{VIN}/smartMaintenanceTyreDiagnosis")
-    results["containers"]= test(f"{api.BASE_API}/customers/containers")
-    results["token_age_min"] = int((time.time() - tokens.get("saved_at",0))/60)
-    
-    return results
