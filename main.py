@@ -1,6 +1,5 @@
 """
 BMW Dashboard — FastAPI Backend
-VERSION: 2.0.0
 Tokens werden aus Environment Variables geladen (Render-persistent)
 """
 import os, time, json, threading
@@ -15,7 +14,6 @@ import uvicorn
 import database as db
 import bmw_api as api
 
-VERSION        = "2.0.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
@@ -64,9 +62,10 @@ def clear_dcf_state():
 
 def get_token() -> str | None:
     """Holt gültigen Token — aus DB, ENV oder via Refresh."""
+    # 1. Aus DB laden
     tokens = db.load_tokens_db()
 
-    # Falls keine DB-Tokens aber ENV-Refresh-Token vorhanden → erneuern
+    # 2. Falls keine DB-Tokens aber ENV-Refresh-Token vorhanden → erneuern
     if not tokens and ENV_REFRESH_TOKEN:
         print("  → Erneuere Token aus ENV_REFRESH_TOKEN...")
         new_t = api.refresh_token(CLIENT_ID, ENV_REFRESH_TOKEN)
@@ -75,20 +74,20 @@ def get_token() -> str | None:
             db.save_tokens_db(new_t)
             api._token_cache = new_t
             tokens = new_t
-            print("  ✓ Token aus ENV erneuert")
+            print("  ✓ Token erneuert")
 
     if not tokens:
         return None
 
-    age     = time.time() - tokens.get("saved_at", 0)
+    # 3. Prüfen ob Token noch gültig
+    age = time.time() - tokens.get("saved_at", 0)
     expires = tokens.get("expires_in", 3600)
 
-    # Token noch gültig
     if age < expires - 60:
         api._token_cache = tokens
         return tokens["access_token"]
 
-    # Token abgelaufen → Refresh
+    # 4. Refresh Token verwenden
     refresh = tokens.get("refresh_token") or ENV_REFRESH_TOKEN
     if refresh:
         print("  → Access Token abgelaufen — erneuere...")
@@ -123,10 +122,12 @@ def fetch_all_data():
 
     result = {"timestamp": datetime.now(timezone.utc).isoformat(), "vin": VIN}
 
+    # Basic Data
     basic = api.get_basic_data(token, VIN)
     if basic:
         result["basicData"] = basic
 
+    # Container + Telemetrie
     container_id = api.get_or_create_container(token, CONTAINER_NAME, api.CONTAINER_KEYS)
     if container_id:
         tel = api.get_telematic_data(token, VIN, container_id)
@@ -136,15 +137,20 @@ def fetch_all_data():
                 db.save_telemetry(key, entry.get("value",""),
                                   entry.get("unit",""), entry.get("timestamp",""))
 
+    # Ladehistorie
     sessions = api.get_charging_history(token, VIN, days=90)
     if sessions:
-        result["new_sessions"] = db.save_charging_sessions(sessions)
+        inserted = db.save_charging_sessions(sessions)
+        result["new_sessions"] = inserted
 
+    # Reifen
     tyres = api.get_tyre_diagnosis(token, VIN)
     if tyres:
         result["tyres"] = tyres
 
-    result["chargingLocations"] = api.get_lbcs(token, VIN)
+    # Ladeorte
+    lbcs = api.get_lbcs(token, VIN)
+    result["chargingLocations"] = lbcs
 
     db.save_snapshot(result)
     _last_fetch = time.time()
@@ -153,21 +159,10 @@ def fetch_all_data():
 
 # ── API Routes ───────────────────────────────────────────────
 
-@app.get("/api/version")
-def version():
-    """Zeigt die aktuelle Version — zum Prüfen ob neuer Code deployed ist."""
-    return {
-        "version": VERSION,
-        "deployed": datetime.now(timezone.utc).isoformat(),
-        "vin": VIN,
-        "env_refresh_token": "✓ vorhanden" if ENV_REFRESH_TOKEN else "✗ fehlt",
-    }
-
 @app.get("/api/status")
 def status():
     token = get_token()
     return {
-        "version": VERSION,
         "authenticated": bool(token),
         "has_env_token": bool(ENV_REFRESH_TOKEN),
         "last_fetch": _last_fetch,
@@ -178,9 +173,9 @@ def status():
 async def login(request: Request):
     body = await request.json()
     if body.get("password") == PASSWORD:
-        response = JSONResponse({"ok": True, "version": VERSION})
+        response = JSONResponse({"ok": True})
         response.set_cookie("auth_token", PASSWORD, httponly=True,
-                            samesite="lax", max_age=60*60*24*30)
+                           samesite="lax", max_age=60*60*24*30)  # 30 Tage
         return response
     raise HTTPException(status_code=401, detail="Falsches Passwort")
 
@@ -250,6 +245,27 @@ def list_containers(request: Request):
         raise HTTPException(401, "Kein BMW Token")
     return api.get_containers(token)
 
+@app.get("/api/test")
+def test_api(request: Request):
+    """Testet die BMW API Verbindung."""
+    require_auth(request)
+    token = get_token()
+    if not token:
+        return {"error": "no_token", "env_refresh": bool(ENV_REFRESH_TOKEN)}
+    import requests as req
+    results = {}
+    for name, url in [
+        ("mappings",  f"{api.BASE_API}/customers/vehicles/mappings"),
+        ("basicData", f"{api.BASE_API}/customers/vehicles/{VIN}/basicData"),
+        ("tyres",     f"{api.BASE_API}/customers/vehicles/{VIN}/smartMaintenanceTyreDiagnosis"),
+    ]:
+        r = req.get(url, headers={"Authorization": f"Bearer {token}",
+                                   "Accept": "application/json", "x-version": "v1"}, timeout=10)
+        try: body = r.json()
+        except: body = r.text[:200]
+        results[name] = {"status": r.status_code, "body": body}
+    return results
+
 
 # ── Static + SPA ─────────────────────────────────────────────
 
@@ -270,17 +286,14 @@ async def serve_spa(full_path: str, request: Request):
     index = static_dir / "index.html"
     if index.exists():
         return HTMLResponse(index.read_text())
-    return HTMLResponse("<h1>BMW Dashboard v{VERSION}</h1>")
+    return HTMLResponse("<h1>BMW Dashboard</h1>")
 
 @app.on_event("startup")
 async def startup():
-    print(f"╔══════════════════════════════════════╗")
-    print(f"║  BMW Dashboard v{VERSION}                ║")
-    print(f"║  VIN: {VIN}    ║")
-    print(f"╚══════════════════════════════════════╝")
+    print(f"BMW Dashboard gestartet — VIN: {VIN}")
     print(f"  ENV_REFRESH_TOKEN: {'✓ vorhanden' if ENV_REFRESH_TOKEN else '✗ fehlt'}")
     token = get_token()
-    print(f"  Token beim Start:  {'✓ gültig' if token else '✗ nicht verfügbar'}")
+    print(f"  Token: {'✓ gültig' if token else '✗ nicht verfügbar'}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
