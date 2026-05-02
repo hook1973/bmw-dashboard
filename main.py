@@ -14,7 +14,7 @@ import uvicorn
 import database as db
 import bmw_api as api
 
-VERSION        = "2.2.0"
+VERSION        = "2.3.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
@@ -22,6 +22,7 @@ CONTAINER_NAME = "bmw_i4_dashboard"
 
 # Tokens aus Environment Variables (persistent auf Render)
 ENV_REFRESH_TOKEN = os.getenv("BMW_REFRESH_TOKEN", "")
+ENV_ACCESS_TOKEN  = os.getenv("BMW_ACCESS_TOKEN", "")
 ENV_GCID          = os.getenv("BMW_GCID", "")
 
 app = FastAPI(title="BMW i4 Dashboard", docs_url=None, redoc_url=None)
@@ -62,48 +63,30 @@ def clear_dcf_state():
 # ── Token Management ─────────────────────────────────────────
 
 def get_token() -> str | None:
-    """Holt gültigen Token — aus DB, ENV oder via Refresh."""
-    # 1. Aus DB laden
+    """Holt Token: DB > ENV_ACCESS_TOKEN > Refresh"""
+    # 1. DB Token wenn gültig
     tokens = db.load_tokens_db()
-
-    # 2. Falls keine DB-Tokens aber ENV-Refresh-Token vorhanden → erneuern
-    if not tokens and ENV_REFRESH_TOKEN:
-        print("  → Erneuere Token aus ENV_REFRESH_TOKEN...")
-        new_t = api.refresh_token(CLIENT_ID, ENV_REFRESH_TOKEN)
+    if tokens:
+        age = time.time() - tokens.get("saved_at", 0)
+        if age < tokens.get("expires_in", 3600) - 60:
+            print(f"  Token aus DB OK ({int(age/60)}min alt)")
+            return tokens["access_token"]
+    # 2. ENV Access Token (manuell täglich aktualisiert)
+    if ENV_ACCESS_TOKEN:
+        print("  Token aus ENV_ACCESS_TOKEN")
+        return ENV_ACCESS_TOKEN
+    # 3. Refresh versuchen
+    refresh = (tokens or {}).get("refresh_token") or ENV_REFRESH_TOKEN
+    if refresh:
+        print("  Erneuere via Refresh...")
+        new_t = api.refresh_token(CLIENT_ID, refresh)
         if new_t:
             new_t["gcid"] = ENV_GCID
             db.save_tokens_db(new_t)
-            api._token_cache = new_t
-            tokens = new_t
-            print("  ✓ Token erneuert")
-
-    if not tokens:
-        return None
-
-    # 3. Prüfen ob Token noch gültig
-    age = time.time() - tokens.get("saved_at", 0)
-    expires = tokens.get("expires_in", 3600)
-
-    if age < expires - 60:
-        api._token_cache = tokens
-        return tokens["access_token"]
-
-    # 4. Refresh Token verwenden
-    refresh = tokens.get("refresh_token") or ENV_REFRESH_TOKEN
-    if refresh:
-        print("  → Access Token abgelaufen — erneuere...")
-        new_t = api.refresh_token(CLIENT_ID, refresh)
-        if new_t:
-            new_t["gcid"] = tokens.get("gcid", ENV_GCID)
-            db.save_tokens_db(new_t)
-            api._token_cache = new_t
-            print("  ✓ Token erneuert")
+            print("  Token erneuert")
             return new_t["access_token"]
-
+    print("  Kein Token verfügbar!")
     return None
-
-
-# ── Auth ─────────────────────────────────────────────────────
 
 def check_password(request: Request) -> bool:
     return request.cookies.get("auth_token") == PASSWORD
