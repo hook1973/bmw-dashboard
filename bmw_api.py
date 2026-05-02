@@ -12,21 +12,18 @@ SCOPES    = "authenticate_user openid cardata:api:read cardata:streaming:read"
 
 # Telemetrie-Keys für den Container
 # Diese werden nach erfolgreichem Key-Test befüllt
+# Nur bestätigte gültige Keys (getestet 02.05.2026)
 CONTAINER_KEYS = [
     "vehicle.vehicle.travelledDistance",
     "vehicle.powertrain.electric.battery.stateOfCharge.displayed",
-    "vehicle.powertrain.electric.range.electric",
-    "vehicle.powertrain.electric.battery.charging.status",
-    "vehicle.powertrain.electric.battery.charging.isChargerConnected",
-    "vehicle.body.chargingPort.status",
-    "vehicle.body.chargingPort.isLocked",
     "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
     "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
     "vehicle.cabin.infotainment.navigation.currentLocation.heading",
-    "vehicle.vehicle.antiTheftAlarmSystem.alarm.armStatus",
+    "vehicle.cabin.infotainment.navigation.currentLocation.altitude",
     "vehicle.body.trunk.isOpen",
+    "vehicle.body.trunk.isLocked",
+    "vehicle.body.hood.isOpen",
     "vehicle.cabin.door.row1.driver.isOpen",
-    "vehicle.cabin.door.row1.passenger.isOpen",
 ]
 
 _token_cache = {}
