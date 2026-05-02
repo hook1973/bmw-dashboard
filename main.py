@@ -14,6 +14,7 @@ import uvicorn
 import database as db
 import bmw_api as api
 
+VERSION        = "2.2.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
@@ -272,6 +273,37 @@ def test_api(request: Request):
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@app.get("/api/test")
+def test_bmw(request: Request):
+    require_auth(request)
+    import requests as req
+    token = get_token()
+    if not token:
+        return {"error": "no_token"}
+    results = {"version": VERSION, "token_prefix": token[:20]}
+    for name, url in [
+        ("basicData",  f"{api.BASE_API}/customers/vehicles/{VIN}/basicData"),
+        ("mappings",   f"{api.BASE_API}/customers/vehicles/mappings"),
+        ("containers", f"{api.BASE_API}/customers/containers"),
+    ]:
+        try:
+            r = req.get(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "x-version": "v1"
+            }, timeout=10)
+            try: body = r.json()
+            except: body = r.text[:200]
+            results[name] = {"status": r.status_code, "body": body}
+        except Exception as e:
+            results[name] = {"error": str(e)}
+    return results
+
+@app.get("/api/version")
+def version():
+    return {"version": VERSION, "vin": VIN, "env_refresh_token": "ok" if ENV_REFRESH_TOKEN else "missing"}
 
 @app.get("/favicon.ico")
 async def favicon():
