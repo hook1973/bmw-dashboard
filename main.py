@@ -14,7 +14,7 @@ import uvicorn
 import database as db
 import bmw_api as api
 
-VERSION        = "2.3.0"
+VERSION        = "2.4.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
@@ -105,39 +105,82 @@ def fetch_all_data():
         return {"error": "no_token", "message": "Bitte BMW verbinden"}
 
     result = {"timestamp": datetime.now(timezone.utc).isoformat(), "vin": VIN}
+    errors = []
 
     # Basic Data
-    basic = api.get_basic_data(token, VIN)
-    if basic:
-        result["basicData"] = basic
+    try:
+        print("  → basicData...")
+        basic = api.get_basic_data(token, VIN)
+        if basic:
+            result["basicData"] = basic
+            print(f"  ✓ basicData: {basic.get('modelName','?')}")
+        else:
+            print("  ✗ basicData: None zurück")
+            errors.append("basicData: None")
+    except Exception as e:
+        print(f"  ✗ basicData Exception: {e}")
+        errors.append(f"basicData: {e}")
 
     # Container + Telemetrie
-    container_id = api.get_or_create_container(token, CONTAINER_NAME, api.CONTAINER_KEYS)
-    if container_id:
-        tel = api.get_telematic_data(token, VIN, container_id)
-        result["telemetry"] = tel
-        for key, entry in tel.items():
-            if isinstance(entry, dict):
-                db.save_telemetry(key, entry.get("value",""),
-                                  entry.get("unit",""), entry.get("timestamp",""))
+    try:
+        print(f"  → Container ({CONTAINER_NAME})...")
+        container_id = api.get_or_create_container(token, CONTAINER_NAME, api.CONTAINER_KEYS)
+        print(f"  {'✓' if container_id else '✗'} Container: {container_id}")
+        if container_id:
+            tel = api.get_telematic_data(token, VIN, container_id)
+            result["telemetry"] = tel
+            print(f"  ✓ Telemetrie: {len(tel)} Keys")
+            for key, entry in tel.items():
+                if isinstance(entry, dict):
+                    db.save_telemetry(key, entry.get("value",""),
+                                      entry.get("unit",""), entry.get("timestamp",""))
+        else:
+            errors.append("Container: None")
+    except Exception as e:
+        print(f"  ✗ Container Exception: {e}")
+        errors.append(f"Container: {e}")
 
     # Ladehistorie
-    sessions = api.get_charging_history(token, VIN, days=90)
-    if sessions:
-        inserted = db.save_charging_sessions(sessions)
-        result["new_sessions"] = inserted
+    try:
+        print("  → Ladehistorie...")
+        sessions = api.get_charging_history(token, VIN, days=90)
+        if sessions:
+            inserted = db.save_charging_sessions(sessions)
+            result["new_sessions"] = inserted
+            print(f"  ✓ {len(sessions)} Sessions")
+        else:
+            print("  ✗ Keine Sessions")
+    except Exception as e:
+        print(f"  ✗ Ladehistorie Exception: {e}")
+        errors.append(f"Ladehistorie: {e}")
 
     # Reifen
-    tyres = api.get_tyre_diagnosis(token, VIN)
-    if tyres:
-        result["tyres"] = tyres
+    try:
+        print("  → Reifen...")
+        tyres = api.get_tyre_diagnosis(token, VIN)
+        if tyres:
+            result["tyres"] = tyres
+            print("  ✓ Reifen OK")
+        else:
+            print("  ✗ Reifen: None")
+    except Exception as e:
+        print(f"  ✗ Reifen Exception: {e}")
+        errors.append(f"Reifen: {e}")
 
     # Ladeorte
-    lbcs = api.get_lbcs(token, VIN)
-    result["chargingLocations"] = lbcs
+    try:
+        lbcs = api.get_lbcs(token, VIN)
+        result["chargingLocations"] = lbcs
+        print(f"  ✓ Ladeorte: {len(lbcs)}")
+    except Exception as e:
+        print(f"  ✗ Ladeorte Exception: {e}")
+
+    if errors:
+        result["errors"] = errors
 
     db.save_snapshot(result)
     _last_fetch = time.time()
+    print(f"  → Snapshot gespeichert. Errors: {errors}")
     return result
 
 
