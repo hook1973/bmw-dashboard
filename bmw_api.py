@@ -155,7 +155,7 @@ def get_containers(token: str) -> list:
 def create_container(token: str, name: str, keys: list) -> str | None:
     r = requests.post(f"{BASE_API}/customers/containers",
         headers=hdrs(token),
-        json={"name": name, "technicalDescriptors": keys}, timeout=15)
+        json={"name": name, "purpose": "dashboard", "technicalDescriptors": keys}, timeout=15)
     if r.status_code == 201:
         return r.json().get("containerId")
     return None
