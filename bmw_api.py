@@ -112,6 +112,7 @@ def poll_token(client_id: str, device_code: str, verifier: str) -> dict | None:
 def get_basic_data(token: str, vin: str) -> dict | None:
     r = requests.get(f"{BASE_API}/customers/vehicles/{vin}/basicData",
         headers=hdrs(token), timeout=15)
+    print(f"    basicData status: {r.status_code}, body: {r.text[:200]}")
     return r.json() if r.status_code == 200 else None
 
 
@@ -178,7 +179,12 @@ def get_telematic_data(token: str, vin: str, container_id: str) -> dict:
 def get_or_create_container(token: str, name: str, keys: list) -> str | None:
     """Holt bestehenden Container oder erstellt neuen."""
     containers = get_containers(token)
+    print(f"    Vorhandene Container: {[c.get('name') for c in containers]}")
     for c in containers:
         if c.get("name") == name and c.get("state") == "ACTIVE":
+            print(f"    Container gefunden: {c['containerId']}")
             return c["containerId"]
-    return create_container(token, name, keys)
+    print(f"    Erstelle neuen Container '{name}'...")
+    cid = create_container(token, name, keys)
+    print(f"    Container erstellt: {cid}")
+    return cid
