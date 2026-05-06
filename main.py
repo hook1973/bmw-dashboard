@@ -1,6 +1,10 @@
 """
-BMW Dashboard — FastAPI Backend
-Tokens werden aus Environment Variables geladen (Render-persistent)
+BMW Dashboard — FastAPI Backend v3.0.0
+Verbesserungen:
+- Smarter Fetch: max 1x pro Stunde automatisch, nie beim Startup
+- Rate Limit Tracking: zählt verbrauchte Requests
+- Cache: zeigt letzte Daten auch bei Rate Limit
+- Auto-Login: Cookie hält 30 Tage
 """
 import os, time, json, threading
 from datetime import datetime, timedelta, timezone
@@ -14,16 +18,19 @@ import uvicorn
 import database as db
 import bmw_api as api
 
-VERSION        = "2.4.0"
+VERSION        = "3.0.0"
 CLIENT_ID      = os.getenv("BMW_CLIENT_ID", "5f4b2906-4dc0-4874-88c6-c84accdcf284")
 VIN            = os.getenv("BMW_VIN",       "WBY21HD080FU24651")
 PASSWORD       = os.getenv("DASHBOARD_PASSWORD", "bmw-i4-2024")
 CONTAINER_NAME = "bmw_i4_dashboard"
 
-# Tokens aus Environment Variables (persistent auf Render)
 ENV_REFRESH_TOKEN = os.getenv("BMW_REFRESH_TOKEN", "")
 ENV_ACCESS_TOKEN  = os.getenv("BMW_ACCESS_TOKEN", "")
 ENV_GCID          = os.getenv("BMW_GCID", "")
+
+# Rate Limit Tracking (50/Tag)
+_rate_limit_count = 0
+_rate_limit_reset = 0  # Unix timestamp wann Reset
 
 app = FastAPI(title="BMW i4 Dashboard", docs_url=None, redoc_url=None)
 db.init_db()
@@ -32,7 +39,29 @@ _last_fetch = 0
 _fetch_lock = threading.Lock()
 
 
-# ── DCF State in DB ──────────────────────────────────────────
+# ── Rate Limit Tracking ──────────────────────────────────────
+
+def track_request(count=1):
+    """Zählt verbrauchte API Requests."""
+    global _rate_limit_count, _rate_limit_reset
+    now = time.time()
+    # Reset um Mitternacht UTC
+    today_midnight = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp()
+    if now < today_midnight or _rate_limit_reset < today_midnight:
+        _rate_limit_count = 0
+        _rate_limit_reset = today_midnight + 86400
+    _rate_limit_count += count
+
+def get_rate_limit_info():
+    return {
+        "used": _rate_limit_count,
+        "remaining": max(0, 50 - _rate_limit_count),
+        "limit": 50
+    }
+
+
+# ── DCF State ────────────────────────────────────────────────
 
 def save_dcf_state(state: dict):
     conn = db.get_db()
@@ -64,29 +93,24 @@ def clear_dcf_state():
 
 def get_token() -> str | None:
     """Holt Token: DB > ENV_ACCESS_TOKEN > Refresh"""
-    # 1. DB Token wenn gültig
     tokens = db.load_tokens_db()
     if tokens:
         age = time.time() - tokens.get("saved_at", 0)
         if age < tokens.get("expires_in", 3600) - 60:
-            print(f"  Token aus DB OK ({int(age/60)}min alt)")
             return tokens["access_token"]
-    # 2. ENV Access Token (manuell täglich aktualisiert)
     if ENV_ACCESS_TOKEN:
-        print("  Token aus ENV_ACCESS_TOKEN")
         return ENV_ACCESS_TOKEN
-    # 3. Refresh versuchen
     refresh = (tokens or {}).get("refresh_token") or ENV_REFRESH_TOKEN
     if refresh:
-        print("  Erneuere via Refresh...")
         new_t = api.refresh_token(CLIENT_ID, refresh)
         if new_t:
             new_t["gcid"] = ENV_GCID
             db.save_tokens_db(new_t)
-            print("  Token erneuert")
             return new_t["access_token"]
-    print("  Kein Token verfügbar!")
     return None
+
+
+# ── Auth ─────────────────────────────────────────────────────
 
 def check_password(request: Request) -> bool:
     return request.cookies.get("auth_token") == PASSWORD
@@ -96,38 +120,54 @@ def require_auth(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-# ── Data Fetch ───────────────────────────────────────────────
+# ── Smart Fetch ──────────────────────────────────────────────
 
-def fetch_all_data():
+def fetch_all_data(force: bool = False):
+    """
+    Ruft BMW API Daten ab.
+    force=False: nur wenn letzte Abfrage > 1 Stunde her
+    force=True:  immer (manueller Abruf)
+    """
     global _last_fetch
+
+    # Nicht automatisch beim Start — nur wenn explizit aufgerufen
+    if not force:
+        age = time.time() - _last_fetch
+        if age < 3600:
+            snap = db.get_latest_snapshot()
+            return snap["data"] if snap else {"error": "no_data"}
+
     token = get_token()
     if not token:
         return {"error": "no_token", "message": "Bitte BMW verbinden"}
 
-    result = {"timestamp": datetime.now(timezone.utc).isoformat(), "vin": VIN}
-    errors = []
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "vin": VIN,
+        "errors": []
+    }
 
-    # Basic Data
+    # Basic Data (1 Request)
     try:
-        print("  → basicData...")
         basic = api.get_basic_data(token, VIN)
+        track_request(1)
         if basic:
             result["basicData"] = basic
             print(f"  ✓ basicData: {basic.get('modelName','?')}")
         else:
-            print("  ✗ basicData: None zurück")
-            errors.append("basicData: None")
+            print("  ✗ basicData: leer")
+            result["errors"].append("basicData leer")
     except Exception as e:
-        print(f"  ✗ basicData Exception: {e}")
-        errors.append(f"basicData: {e}")
+        print(f"  ✗ basicData: {e}")
+        result["errors"].append(f"basicData: {e}")
 
-    # Container + Telemetrie
+    # Container + Telemetrie (2 Requests: get + create/get)
     try:
-        print(f"  → Container ({CONTAINER_NAME})...")
         container_id = api.get_or_create_container(token, CONTAINER_NAME, api.CONTAINER_KEYS)
-        print(f"  {'✓' if container_id else '✗'} Container: {container_id}")
+        track_request(2)
         if container_id:
             tel = api.get_telematic_data(token, VIN, container_id)
+            track_request(1)
             result["telemetry"] = tel
             print(f"  ✓ Telemetrie: {len(tel)} Keys")
             for key, entry in tel.items():
@@ -135,64 +175,70 @@ def fetch_all_data():
                     db.save_telemetry(key, entry.get("value",""),
                                       entry.get("unit",""), entry.get("timestamp",""))
         else:
-            errors.append("Container: None")
+            result["errors"].append("Container None")
     except Exception as e:
-        print(f"  ✗ Container Exception: {e}")
-        errors.append(f"Container: {e}")
+        print(f"  ✗ Container: {e}")
+        result["errors"].append(f"Container: {e}")
 
-    # Ladehistorie
+    # Ladehistorie (1 Request)
     try:
-        print("  → Ladehistorie...")
         sessions = api.get_charging_history(token, VIN, days=90)
+        track_request(1)
         if sessions:
-            inserted = db.save_charging_sessions(sessions)
-            result["new_sessions"] = inserted
+            db.save_charging_sessions(sessions)
+            result["new_sessions"] = len(sessions)
             print(f"  ✓ {len(sessions)} Sessions")
-        else:
-            print("  ✗ Keine Sessions")
     except Exception as e:
-        print(f"  ✗ Ladehistorie Exception: {e}")
-        errors.append(f"Ladehistorie: {e}")
+        print(f"  ✗ Ladehistorie: {e}")
 
-    # Reifen
+    # Reifen (1 Request)
     try:
-        print("  → Reifen...")
         tyres = api.get_tyre_diagnosis(token, VIN)
+        track_request(1)
         if tyres:
             result["tyres"] = tyres
             print("  ✓ Reifen OK")
-        else:
-            print("  ✗ Reifen: None")
     except Exception as e:
-        print(f"  ✗ Reifen Exception: {e}")
-        errors.append(f"Reifen: {e}")
+        print(f"  ✗ Reifen: {e}")
 
-    # Ladeorte
+    # Ladeorte (1 Request)
     try:
         lbcs = api.get_lbcs(token, VIN)
+        track_request(1)
         result["chargingLocations"] = lbcs
-        print(f"  ✓ Ladeorte: {len(lbcs)}")
     except Exception as e:
-        print(f"  ✗ Ladeorte Exception: {e}")
+        print(f"  ✗ Ladeorte: {e}")
 
-    if errors:
-        result["errors"] = errors
+    result["rate_limit"] = get_rate_limit_info()
+    print(f"  → Requests heute: {_rate_limit_count}/50")
+
+    if not result["errors"]:
+        del result["errors"]
 
     db.save_snapshot(result)
     _last_fetch = time.time()
-    print(f"  → Snapshot gespeichert. Errors: {errors}")
     return result
 
 
 # ── API Routes ───────────────────────────────────────────────
 
+@app.get("/api/version")
+def version():
+    return {"version": VERSION, "vin": VIN,
+            "env_token": "ok" if ENV_ACCESS_TOKEN else "missing"}
+
 @app.get("/api/status")
-def status():
+def status(request: Request):
     token = get_token()
+    snap = db.get_latest_snapshot()
+    last_ts = snap["data"].get("timestamp") if snap else None
     return {
-        "authenticated": bool(token),
-        "has_env_token": bool(ENV_REFRESH_TOKEN),
+        "version": VERSION,
+        "authenticated": check_password(request),
+        "bmw_connected": bool(token),
         "last_fetch": _last_fetch,
+        "last_fetch_ts": last_ts,
+        "rate_limit": get_rate_limit_info(),
         "vin": VIN
     }
 
@@ -200,11 +246,11 @@ def status():
 async def login(request: Request):
     body = await request.json()
     if body.get("password") == PASSWORD:
-        response = JSONResponse({"ok": True})
+        response = JSONResponse({"ok": True, "version": VERSION})
         response.set_cookie("auth_token", PASSWORD, httponly=True,
-                           samesite="lax", max_age=60*60*24*30)  # 30 Tage
+                            samesite="lax", max_age=60*60*24*30)
         return response
-    raise HTTPException(status_code=401, detail="Falsches Passwort")
+    raise HTTPException(401, "Falsches Passwort")
 
 @app.get("/api/snapshot")
 def get_snapshot(request: Request):
@@ -212,13 +258,26 @@ def get_snapshot(request: Request):
     snap = db.get_latest_snapshot()
     if not snap:
         return {"error": "no_data"}
-    return snap["data"]
+    data = snap["data"]
+    data["rate_limit"] = get_rate_limit_info()
+    data["cached"] = True
+    return data
 
 @app.post("/api/fetch")
 def trigger_fetch(request: Request):
+    """Manueller Abruf — immer frische Daten."""
     require_auth(request)
+    remaining = get_rate_limit_info()["remaining"]
+    if remaining < 5:
+        # Rate Limit fast aufgebraucht — gib Cache zurück
+        snap = db.get_latest_snapshot()
+        if snap:
+            data = snap["data"]
+            data["rate_limit"] = get_rate_limit_info()
+            data["warning"] = f"Rate Limit fast erreicht ({remaining} verbleibend) — zeige gespeicherte Daten"
+            return data
     with _fetch_lock:
-        result = fetch_all_data()
+        result = fetch_all_data(force=True)
     return result
 
 @app.get("/api/charging")
@@ -233,8 +292,26 @@ def telemetry_history(key: str, request: Request, limit: int = 100):
     require_auth(request)
     return {"key": key, "data": db.get_telemetry_history(key, limit=limit)}
 
-
-# ── BMW Auth ─────────────────────────────────────────────────
+@app.get("/api/test")
+def test_api(request: Request):
+    require_auth(request)
+    token = get_token()
+    if not token:
+        return {"error": "no_token"}
+    import requests as req
+    results = {"version": VERSION, "rate_limit": get_rate_limit_info()}
+    for name, url in [
+        ("mappings",  f"{api.BASE_API}/customers/vehicles/mappings"),
+        ("basicData", f"{api.BASE_API}/customers/vehicles/{VIN}/basicData"),
+        ("tyres",     f"{api.BASE_API}/customers/vehicles/{VIN}/smartMaintenanceTyreDiagnosis"),
+    ]:
+        r = req.get(url, headers={"Authorization": f"Bearer {token}",
+                                   "Accept": "application/json", "x-version": "v1"}, timeout=10)
+        track_request(1)
+        try: body = r.json()
+        except: body = r.text[:200]
+        results[name] = {"status": r.status_code, "body": body}
+    return results
 
 @app.post("/api/bmw/auth/start")
 def bmw_auth_start(request: Request):
@@ -259,39 +336,9 @@ def bmw_auth_poll(request: Request):
     tokens = api.poll_token(CLIENT_ID, state["device_code"], state["code_verifier"])
     if tokens:
         db.save_tokens_db(tokens)
-        api._token_cache = tokens
         clear_dcf_state()
         return {"ok": True, "gcid": tokens.get("gcid")}
     return {"ok": False, "pending": True}
-
-@app.get("/api/bmw/containers")
-def list_containers(request: Request):
-    require_auth(request)
-    token = get_token()
-    if not token:
-        raise HTTPException(401, "Kein BMW Token")
-    return api.get_containers(token)
-
-@app.get("/api/test")
-def test_api(request: Request):
-    """Testet die BMW API Verbindung."""
-    require_auth(request)
-    token = get_token()
-    if not token:
-        return {"error": "no_token", "env_refresh": bool(ENV_REFRESH_TOKEN)}
-    import requests as req
-    results = {}
-    for name, url in [
-        ("mappings",  f"{api.BASE_API}/customers/vehicles/mappings"),
-        ("basicData", f"{api.BASE_API}/customers/vehicles/{VIN}/basicData"),
-        ("tyres",     f"{api.BASE_API}/customers/vehicles/{VIN}/smartMaintenanceTyreDiagnosis"),
-    ]:
-        r = req.get(url, headers={"Authorization": f"Bearer {token}",
-                                   "Accept": "application/json", "x-version": "v1"}, timeout=10)
-        try: body = r.json()
-        except: body = r.text[:200]
-        results[name] = {"status": r.status_code, "body": body}
-    return results
 
 
 # ── Static + SPA ─────────────────────────────────────────────
@@ -300,58 +347,29 @@ static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-
-@app.get("/api/test")
-def test_bmw(request: Request):
-    require_auth(request)
-    import requests as req
-    token = get_token()
-    if not token:
-        return {"error": "no_token"}
-    results = {"version": VERSION, "token_prefix": token[:20]}
-    for name, url in [
-        ("basicData",  f"{api.BASE_API}/customers/vehicles/{VIN}/basicData"),
-        ("mappings",   f"{api.BASE_API}/customers/vehicles/mappings"),
-        ("containers", f"{api.BASE_API}/customers/containers"),
-    ]:
-        try:
-            r = req.get(url, headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-                "x-version": "v1"
-            }, timeout=10)
-            try: body = r.json()
-            except: body = r.text[:200]
-            results[name] = {"status": r.status_code, "body": body}
-        except Exception as e:
-            results[name] = {"error": str(e)}
-    return results
-
-@app.get("/api/version")
-def version():
-    return {"version": VERSION, "vin": VIN, "env_refresh_token": "ok" if ENV_REFRESH_TOKEN else "missing"}
-
 @app.get("/favicon.ico")
 async def favicon():
     raise HTTPException(404)
 
 @app.get("/api/{path:path}")
 async def api_404(path: str):
-    raise HTTPException(404, f"API endpoint /api/{path} not found")
+    raise HTTPException(404, f"/api/{path} not found")
 
 @app.get("/{full_path:path}", response_class=HTMLResponse)
 async def serve_spa(full_path: str, request: Request):
     index = static_dir / "index.html"
     if index.exists():
         return HTMLResponse(index.read_text())
-    return HTMLResponse("<h1>BMW Dashboard</h1>")
+    return HTMLResponse(f"<h1>BMW Dashboard v{VERSION}</h1>")
 
 @app.on_event("startup")
 async def startup():
-    print(f"BMW Dashboard gestartet — VIN: {VIN}")
-    print(f"  ENV_REFRESH_TOKEN: {'✓ vorhanden' if ENV_REFRESH_TOKEN else '✗ fehlt'}")
-    token = get_token()
-    print(f"  Token: {'✓ gültig' if token else '✗ nicht verfügbar'}")
+    print(f"╔══════════════════════════════════╗")
+    print(f"║  BMW Dashboard v{VERSION}            ║")
+    print(f"╚══════════════════════════════════╝")
+    print(f"  VIN:   {VIN}")
+    print(f"  Token: {'✓' if ENV_ACCESS_TOKEN else '✗'}")
+    # KEIN automatischer Fetch beim Start — spart Rate Limit!
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

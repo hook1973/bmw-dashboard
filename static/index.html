@@ -222,6 +222,7 @@ canvas { width:100%!important; }
     </nav>
     <div class="header-right">
       <div id="status-dot"></div>
+      <div id="rate-limit" style="font-size:10px;color:var(--muted)">–/50</div>
       <div id="last-update">–</div>
       <button id="fetch-btn" onclick="fetchData()">Abrufen</button>
     </div>
@@ -476,6 +477,19 @@ function badge(text, cls) {
 
 function renderDashboard() {
   if (!DATA) return;
+  // Rate Limit anzeigen
+  if (DATA.rate_limit) {
+    const rl = DATA.rate_limit;
+    const el = document.getElementById('rate-limit');
+    if (el) {
+      el.textContent = rl.used + '/' + rl.limit + ' req';
+      el.style.color = rl.remaining < 10 ? 'var(--red)' : rl.remaining < 20 ? 'var(--amber)' : 'var(--muted)';
+    }
+  }
+  // Warning anzeigen
+  if (DATA.warning) {
+    document.getElementById('last-update').textContent = '⚠ ' + DATA.warning;
+  }
   const bd = DATA.basicData || {};
   const tel = DATA.telemetry || {};
 
@@ -638,13 +652,23 @@ async function init() {
   setInterval(fetchData, 5 * 60 * 1000);
 }
 
-// Passwort-Cookie check beim Laden
+// Beim Laden: Cookie prüfen
 (async () => {
-  const r = await fetch('/api/snapshot');
-  if (r.status !== 401) {
+  const r = await fetch('/api/status');
+  const d = await r.json();
+  if (d.authenticated) {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').classList.add('visible');
     init();
+  }
+  // Rate Limit anzeigen
+  if (d.rate_limit) {
+    const rl = d.rate_limit;
+    const el = document.getElementById('rate-limit');
+    if (el) {
+      el.textContent = rl.used + '/' + rl.limit;
+      el.style.color = rl.remaining < 10 ? 'var(--red)' : rl.remaining < 20 ? 'var(--amber)' : 'var(--muted)';
+    }
   }
 })();
 </script>
