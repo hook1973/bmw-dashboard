@@ -8,19 +8,19 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #080810;
-  --surface: #0e0e1a;
-  --surface2: #141428;
-  --border: rgba(255,255,255,0.06);
-  --border2: rgba(255,255,255,0.12);
-  --text: #e8e8f0;
-  --muted: #5a5a78;
-  --accent: #4f7cff;
-  --accent2: #7c5cff;
-  --green: #22d47a;
-  --amber: #ffb340;
-  --red: #ff4f4f;
-  --teal: #22d4c8;
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --surface2: #f4f6f9;
+  --border: rgba(0,0,0,0.08);
+  --border2: rgba(0,0,0,0.15);
+  --text: #1a1a2e;
+  --muted: #6b7280;
+  --accent: #1d4ed8;
+  --accent2: #4f46e5;
+  --green: #16a34a;
+  --amber: #d97706;
+  --red: #dc2626;
+  --teal: #0891b2;
   --font-display: 'Syne', sans-serif;
   --font-mono: 'DM Mono', monospace;
 }
@@ -41,7 +41,8 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-mono); mi
 .login-logo .badge { width:56px;height:56px;background:var(--accent);border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:800;font-size:18px;margin-bottom:12px; }
 .login-logo h1 { font-family:var(--font-display);font-size:20px;font-weight:700; }
 .login-logo p { font-size:12px;color:var(--muted);margin-top:4px; }
-.login-box input { width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--font-mono);font-size:14px;margin-bottom:12px; }
+.login-box input { width:100%;padding:12px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--font-mono);font-size:14px;margin-bottom:12px;outline:none; }
+.login-box input:focus { border-color:var(--accent); }
 .login-box button { width:100%;padding:12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-family:var(--font-display);font-weight:700;font-size:14px;cursor:pointer;transition:opacity 0.2s; }
 .login-box button:hover { opacity:0.85; }
 .login-error { color:var(--red);font-size:12px;text-align:center;margin-top:8px; }
@@ -53,7 +54,7 @@ body { background:var(--bg); color:var(--text); font-family:var(--font-mono); mi
   align-items:center; justify-content:center;
 }
 #bmw-auth-modal.visible { display:flex; }
-.modal-box { width:420px;padding:36px;background:var(--surface);border:1px solid var(--border2);border-radius:16px;text-align:center; }
+.modal-box { width:420px;padding:36px;background:var(--surface);border:1px solid var(--border2);border-radius:16px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.15); }
 .modal-box h2 { font-family:var(--font-display);font-size:20px;margin-bottom:8px; }
 .modal-box p { font-size:13px;color:var(--muted);margin-bottom:24px; }
 .user-code { font-size:32px;font-weight:500;letter-spacing:8px;color:var(--accent);margin:20px 0; }
@@ -71,8 +72,9 @@ header {
   border-bottom:1px solid var(--border);
   display:flex; align-items:center; justify-content:space-between;
   position:sticky; top:0; z-index:50;
-  background:rgba(8,8,16,0.9);
+  background:rgba(240,242,245,0.95);
   backdrop-filter:blur(20px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 .header-left { display:flex;align-items:center;gap:16px; }
 .h-badge { width:36px;height:36px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:800;font-size:12px; }
@@ -82,7 +84,7 @@ header {
 nav { display:flex;gap:4px; }
 nav a { padding:6px 14px;border-radius:6px;font-size:12px;color:var(--muted);text-decoration:none;transition:all 0.2s; }
 nav a:hover { color:var(--text);background:var(--surface2); }
-nav a.active { color:var(--text);background:var(--surface2); }
+nav a.active { color:var(--accent);background:#dbeafe; }
 
 .header-right { display:flex;align-items:center;gap:12px; }
 #fetch-btn { padding:7px 16px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:var(--font-mono);font-size:11px;cursor:pointer;transition:opacity 0.2s; }
@@ -122,15 +124,15 @@ nav a.active { color:var(--text);background:var(--surface2); }
 /* Badges */
 .badge { display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:500; }
 .badge::before { content:'';width:5px;height:5px;border-radius:50%;flex-shrink:0; }
-.badge-green  { background:#0d2e1a;color:var(--green);  } .badge-green::before  { background:var(--green); }
-.badge-blue   { background:#0d1a3a;color:var(--accent); } .badge-blue::before   { background:var(--accent); }
-.badge-amber  { background:#2e1e00;color:var(--amber);  } .badge-amber::before  { background:var(--amber); }
-.badge-red    { background:#2e0d0d;color:var(--red);    } .badge-red::before    { background:var(--red); }
-.badge-gray   { background:var(--surface2);color:var(--muted); } .badge-gray::before { background:var(--muted); }
+.badge-green  { background:#dcfce7;color:#15803d;  } .badge-green::before  { background:#16a34a; }
+.badge-blue   { background:#dbeafe;color:#1d4ed8; } .badge-blue::before   { background:#1d4ed8; }
+.badge-amber  { background:#fef3c7;color:#b45309;  } .badge-amber::before  { background:#d97706; }
+.badge-red    { background:#fee2e2;color:#b91c1c;    } .badge-red::before    { background:#dc2626; }
+.badge-gray   { background:#f3f4f6;color:#6b7280; } .badge-gray::before { background:#9ca3af; }
 
 /* Tyre Grid */
 .tyre-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px; }
-.tyre { background:var(--surface2);border-radius:8px;padding:14px;text-align:center; }
+.tyre { background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center; }
 .tyre-pos { font-size:9px;letter-spacing:2px;color:var(--muted);margin-bottom:6px; }
 .tyre-km { font-family:var(--font-display);font-size:22px;font-weight:700; }
 .tyre-label { font-size:10px;color:var(--muted);margin-top:4px; }
